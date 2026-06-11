@@ -7,9 +7,21 @@ type PlayerState = {
   y: number;
   vx: number;
   vy: number;
+  score: number;
+  deaths: number;
+  alive: boolean;
+  respawnRemainMs: number;
   ghost: boolean;
   ghostRemainMs: number;
   ghostCooldownRemainMs: number;
+};
+
+type MissileState = {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
 };
 
 type ServerMessage =
@@ -23,6 +35,12 @@ type ServerMessage =
       type: "state";
       serverTime: number;
       players: PlayerState[];
+      missiles: MissileState[];
+      difficulty?: {
+        level: number;
+        spawnIntervalMs: number;
+        maxMissiles: number;
+      };
     }
   | {
       type: "playerLeft";
@@ -43,10 +61,16 @@ let lastGhostPressed = false;
 
 const players = new Map<string, PlayerState>();
 const sprites = new Map<string, { body: Graphics; label: Text }>();
+const playerViews = new Map<string, { x: number; y: number }>();
+const missiles = new Map<string, MissileState>();
+const missileSprites = new Map<string, Graphics>();
+const missileViews = new Map<string, { x: number; y: number }>();
+let difficulty = { level: 1, spawnIntervalMs: 0, maxMissiles: 0 };
 
 const keys = new Set<string>();
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
+const statsEl = document.querySelector<HTMLDivElement>("#stats")!;
 const ghostButton = document.querySelector<HTMLButtonElement>("#ghostButton")!;
 const joystickBase = document.querySelector<HTMLDivElement>("#joystickBase")!;
 const joystickKnob = document.querySelector<HTMLDivElement>("#joystickKnob")!;
@@ -87,11 +111,15 @@ function connect() {
     if (msg.type === "state") {
       players.clear();
       for (const p of msg.players) players.set(p.id, p);
+      missiles.clear();
+      for (const m of msg.missiles ?? []) missiles.set(m.id, m);
+      if (msg.difficulty) difficulty = msg.difficulty;
     }
 
     if (msg.type === "playerLeft") {
       players.delete(msg.id);
       const sprite = sprites.get(msg.id);
+      playerViews.delete(msg.id);
       if (sprite) {
         world.removeChild(sprite.body);
         world.removeChild(sprite.label);
@@ -104,6 +132,7 @@ function connect() {
     socket = null;
     myId = "";
     players.clear();
+    missiles.clear();
 
     const retryMs = Math.min(1000 * 2 ** reconnectAttempts, 8000);
     reconnectAttempts += 1;
@@ -180,6 +209,42 @@ function ensureSprite(id: string) {
   return sprite;
 }
 
+function ensureMissileSprite(id: string) {
+  let sprite = missileSprites.get(id);
+  if (sprite) return sprite;
+
+  sprite = new Graphics();
+  world.addChild(sprite);
+  missileSprites.set(id, sprite);
+  return sprite;
+}
+
+function getPlayerView(p: PlayerState, isMe: boolean) {
+  let view = playerViews.get(p.id);
+  if (!view || isMe) {
+    view = { x: p.x, y: p.y };
+    playerViews.set(p.id, view);
+    return view;
+  }
+
+  view.x += (p.x - view.x) * 0.34;
+  view.y += (p.y - view.y) * 0.34;
+  return view;
+}
+
+function getMissileView(m: MissileState) {
+  let view = missileViews.get(m.id);
+  if (!view) {
+    view = { x: m.x, y: m.y };
+    missileViews.set(m.id, view);
+    return view;
+  }
+
+  view.x += (m.x - view.x) * 0.46;
+  view.y += (m.y - view.y) * 0.46;
+  return view;
+}
+
 function drawArena() {
   const g = new Graphics();
   g.rect(0, 0, arena.width, arena.height);
@@ -189,8 +254,9 @@ function drawArena() {
 
 function updateCamera() {
   const me = players.get(myId);
-  const targetX = me ? me.x : arena.width / 2;
-  const targetY = me ? me.y : arena.height / 2;
+  const meView = me ? getPlayerView(me, true) : null;
+  const targetX = meView ? meView.x : arena.width / 2;
+  const targetY = meView ? meView.y : arena.height / 2;
   world.x = app.screen.width / 2 - targetX;
   world.y = app.screen.height / 2 - targetY;
 }
@@ -199,10 +265,19 @@ function renderPlayers() {
   for (const p of players.values()) {
     const s = ensureSprite(p.id);
     const isMe = p.id === myId;
+    const view = getPlayerView(p, isMe);
 
     s.body.clear();
 
-    if (p.ghost) {
+    if (!p.alive) {
+      s.body.circle(0, 0, isMe ? 20 : 17);
+      s.body.stroke({ color: 0x98a0b3, width: 3, alpha: 0.65 });
+      s.body.moveTo(-11, -11);
+      s.body.lineTo(11, 11);
+      s.body.moveTo(11, -11);
+      s.body.lineTo(-11, 11);
+      s.body.stroke({ color: 0x98a0b3, width: 3, alpha: 0.65 });
+    } else if (p.ghost) {
       s.body.circle(0, 0, isMe ? 23 : 20);
       s.body.fill({ color: isMe ? 0x88ccff : 0xb6f0ff, alpha: 0.28 });
       s.body.circle(0, 0, isMe ? 14 : 12);
@@ -212,12 +287,12 @@ function renderPlayers() {
       s.body.fill({ color: isMe ? 0x65e572 : 0xff6b6b, alpha: 0.95 });
     }
 
-    s.body.x = p.x;
-    s.body.y = p.y;
+    s.body.x = view.x;
+    s.body.y = view.y;
 
-    s.label.text = isMe ? `${p.id} YOU` : p.id;
-    s.label.x = p.x - 24;
-    s.label.y = p.y - 42;
+    s.label.text = `${isMe ? `${p.id} YOU` : p.id} ${p.alive ? p.score : `RESPAWN ${Math.ceil(p.respawnRemainMs / 1000)}`}`;
+    s.label.x = view.x - 40;
+    s.label.y = view.y - 42;
   }
 
   for (const [id, s] of sprites.entries()) {
@@ -225,6 +300,7 @@ function renderPlayers() {
       world.removeChild(s.body);
       world.removeChild(s.label);
       sprites.delete(id);
+      playerViews.delete(id);
     }
   }
 
@@ -237,6 +313,44 @@ function renderPlayers() {
         ? `CD ${cd}`
         : "GHOST";
   }
+}
+
+function renderMissiles() {
+  for (const m of missiles.values()) {
+    const s = ensureMissileSprite(m.id);
+    const view = getMissileView(m);
+    const angle = Math.atan2(m.vy, m.vx);
+
+    s.clear();
+    s.rotation = angle;
+    s.x = view.x;
+    s.y = view.y;
+    s.moveTo(18, 0);
+    s.lineTo(-12, -9);
+    s.lineTo(-6, 0);
+    s.lineTo(-12, 9);
+    s.closePath();
+    s.fill({ color: 0xff3658, alpha: 0.96 });
+    s.circle(-15, 0, 5);
+    s.fill({ color: 0xffb84d, alpha: 0.72 });
+  }
+
+  for (const [id, sprite] of missileSprites.entries()) {
+    if (!missiles.has(id)) {
+      world.removeChild(sprite);
+      missileSprites.delete(id);
+      missileViews.delete(id);
+    }
+  }
+}
+
+function updateHud() {
+  const connected = socket?.readyState === WebSocket.OPEN;
+  const me = players.get(myId);
+  statusEl.textContent = `${connected ? "connected" : "connecting"} / myId=${myId || "-"} / players=${players.size}`;
+  statsEl.textContent = me
+    ? `score=${me.score} / deaths=${me.deaths} / missiles=${missiles.size}/${difficulty.maxMissiles} / level=${difficulty.level}`
+    : `score=0 / deaths=0 / missiles=${missiles.size}`;
 }
 
 function updateJoystickVisual() {
@@ -318,11 +432,9 @@ async function bootstrap() {
 
   app.ticker.add(() => {
     updateCamera();
+    renderMissiles();
     renderPlayers();
-
-    const connected = socket?.readyState === WebSocket.OPEN;
-    const count = players.size;
-    statusEl.textContent = `${connected ? "connected" : "connecting"} / myId=${myId || "-"} / players=${count}`;
+    updateHud();
   });
 }
 
