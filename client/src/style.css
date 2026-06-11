@@ -1,0 +1,69 @@
+html, body, #app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #05070d;
+  touch-action: none;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+canvas {
+  display: block;
+}
+
+#hud {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  color: white;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+#ghostButton {
+  position: fixed;
+  right: 24px;
+  bottom: 36px;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.7);
+  background: rgba(110, 180, 255, 0.28);
+  color: white;
+  font-weight: 700;
+  font-size: 15px;
+  touch-action: none;
+}
+
+#joystickBase {
+  position: fixed;
+  left: 28px;
+  bottom: 32px;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 2px solid rgba(255,255,255,0.24);
+  touch-action: none;
+}
+
+#joystickKnob {
+  position: absolute;
+  left: 39px;
+  top: 39px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.55);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  #joystickBase, #ghostButton {
+    opacity: 0.28;
+  }
+}
